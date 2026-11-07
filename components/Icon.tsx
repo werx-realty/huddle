@@ -19,7 +19,6 @@ const P: Record<string, React.ReactNode> = {
   send: (<><path d="M22 2L11 13" /><path d="M22 2l-7 20-4-9-9-4z" /></>),
   plus: (<><path d="M12 5v14M5 12h14" /></>),
   check: (<><path d="M20 6L9 17l-5-5" /></>),
-  more: (<><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></>),
   remove: (<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M17 9l4 4M21 9l-4 4" /></>),
   power: (<><path d="M18.36 6.64a9 9 0 1 1-12.73 0" /><path d="M12 2v10" /></>),
   chevL: (<><path d="M15 18l-6-6 6-6" /></>),
@@ -32,7 +31,7 @@ const P: Record<string, React.ReactNode> = {
   refresh: (<><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" /><path d="M21 3v5h-5" /></>),
 };
 
-export function Icon({ name, size = 20, stroke = 1.9, className }: { name: keyof typeof P | string; size?: number; stroke?: number; className?: string }) {
+export function Icon({ name, size = 20, stroke = 1.9, className }: { name: string; size?: number; stroke?: number; className?: string }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       {P[name]}

@@ -57,7 +57,6 @@ export default function Lobby() {
     };
   }, [loadRooms]);
 
-  // Camera preview
   useEffect(() => {
     if (!profile) return;
     let cancelled = false;

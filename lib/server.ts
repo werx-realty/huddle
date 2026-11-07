@@ -17,7 +17,6 @@ export function roomService() {
   return new RoomServiceClient(http, key, secret);
 }
 
-/** Host key = HMAC of the room name. Stateless: whoever created the room holds it. */
 export function hostKeyFor(room: string) {
   return createHmac('sha256', env().secret).update('host:' + room).digest('hex').slice(0, 32);
 }

@@ -18,6 +18,7 @@ export default function RoomPage() {
   const [error, setError] = useState<{ text: string; code?: string } | null>(null);
   const [lost, setLost] = useState(0);
   const [hostKey, setHK] = useState('');
+  const [backTo, setBackTo] = useState('');
 
   const connect = useCallback(async (p: Profile) => {
     setError(null);
@@ -46,11 +47,11 @@ export default function RoomPage() {
       router.replace('/?join=' + encodeURIComponent(roomName));
       return;
     }
+    setBackTo(new URLSearchParams(location.search).get('back') || '');
     setProfile(p);
     connect(p);
   }, [connect, roomName, router]);
 
-  // Auto-retry after an unexpected disconnect (internet drop)
   useEffect(() => {
     if (!lost || !profile) return;
     const t = setTimeout(() => connect(profile), 2500);
@@ -62,12 +63,13 @@ export default function RoomPage() {
       <div className="center-screen">
         <div className="card msg-card">
           <Logo size={36} />
-          <h2>{error.code === 'ended' ? 'Session ended' : error.code === 'locked' ? 'Session locked' : error.code === 'full' ? 'Session full' : 'Can’t join right now'}</h2>
+          <h2>{error.code === 'ended' && backTo ? 'Private room closed' : error.code === 'ended' ? 'Session ended' : error.code === 'locked' ? 'Session locked' : error.code === 'full' ? 'Session full' : 'Can’t join right now'}</h2>
           <p>{error.text}</p>
           <div className="btn-row center">
             {(error.code === 'net' || error.code === 'locked' || error.code === 'full' || !error.code) && profile && (
               <button className="btn primary" onClick={() => connect(profile)}><Icon name="refresh" size={16} /> Try again</button>
             )}
+            {backTo && <button className="btn primary" onClick={() => window.location.assign('/room/' + encodeURIComponent(backTo))}>Back to floor</button>}
             <button className="btn ghost" onClick={() => router.push('/')}>Back to lobby</button>
           </div>
         </div>
@@ -92,12 +94,16 @@ export default function RoomPage() {
       isHost={conn.host}
       hostKey={hostKey}
       profile={profile}
+      backTo={backTo}
       onExit={(reason) => {
+        if ((window as any).__huddleNav) return;
         if (reason === '__lost__') {
           setConn(null);
           setLost((n) => n + 1);
         } else if (reason) {
           router.push('/?msg=' + encodeURIComponent(reason));
+        } else if (backTo) {
+          window.location.assign('/room/' + encodeURIComponent(backTo));
         } else {
           router.push('/');
         }

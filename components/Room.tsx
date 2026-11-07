@@ -30,7 +30,8 @@ import {
 } from 'livekit-client';
 import { Icon, Logo } from './Icon';
 import { ThemePicker } from './ThemePicker';
-import { activeStatus, colorFor, fmtDuration, initials, Profile, STATUSES, StatusKey } from '@/lib/client';
+import { activeStatus, colorFor, fmtDuration, initials, Profile, setHostKey, STATUSES, StatusKey } from '@/lib/client';
+import '@/app/private.css';
 
 /* ---------------------------------- types --------------------------------- */
 type ChatMsg = {
@@ -50,7 +51,10 @@ type Wire =
   | ({ t: 'msg' } & Omit<ChatMsg, 'reacts' | 'answered'>)
   | { t: 'react'; id: string; emoji: string; from: string }
   | { t: 'answered'; id: string }
-  | { t: 'float'; emoji: string };
+  | { t: 'float'; emoji: string }
+  | { t: 'pr-invite'; room: string }
+  | { t: 'pr-yes'; room: string }
+  | { t: 'pr-no'; room: string };
 type Toast = { id: string; text: string; color?: string; emoji?: string };
 type Float = { id: string; identity: string; emoji: string; x: number };
 
@@ -69,6 +73,7 @@ export function HuddleRoom(props: {
   isHost: boolean;
   hostKey: string;
   profile: Profile;
+  backTo?: string;
   onExit: (reason?: string) => void;
 }) {
   const room = useMemo(
@@ -76,10 +81,11 @@ export function HuddleRoom(props: {
       new Room({
         adaptiveStream: true,
         dynacast: true,
-        videoCaptureDefaults: { resolution: VideoPresets.h540.resolution },
+        videoCaptureDefaults: { resolution: { width: 640, height: 360, frameRate: 15 } },
         publishDefaults: {
           simulcast: true,
-          videoSimulcastLayers: [VideoPresets.h180, VideoPresets.h360],
+          videoSimulcastLayers: [VideoPresets.h180],
+          videoEncoding: { maxBitrate: 350_000, maxFramerate: 15 },
           dtx: true,
           red: true,
         },
@@ -128,7 +134,7 @@ export function HuddleRoom(props: {
 }
 
 /* -------------------------------- main view ------------------------------- */
-function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boolean; hostKey: string; profile: Profile }) {
+function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isHost: boolean; hostKey: string; profile: Profile; backTo?: string }) {
   const room = useRoomContext();
   const participants = useParticipants();
   const conn = useConnectionState();
@@ -155,6 +161,18 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
   const [composeMode, setComposeMode] = useState<{ q?: boolean; prefill?: string; n: number }>({ n: 0 });
   const panelRef = useRef(panel);
   panelRef.current = panel;
+  const [invite, setInvite] = useState<{ from: string; name: string; room: string } | null>(null);
+  const [pending, setPending] = useState<{ to: string; name: string; room: string } | null>(null);
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  const inPrivate = !!backTo;
+  const goPrivate = useCallback(
+    (r: string) => {
+      (window as any).__huddleNav = true;
+      window.location.assign('/room/' + encodeURIComponent(r) + '?back=' + encodeURIComponent(roomName));
+    },
+    [roomName],
+  );
 
   // open chat on the right by default on wide screens
   useEffect(() => {
@@ -206,6 +224,15 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
         setMsgs((x) => x.map((m) => (m.id === w.id ? { ...m, answered: true } : m)));
       } else if (w.t === 'float') {
         if (REACTIONS.includes(w.emoji)) addFloat(p.identity, w.emoji);
+      } else if (w.t === 'pr-invite') {
+        if (/^private-[a-f0-9]+$/.test(w.room)) setInvite({ from: p.identity, name: p.name || 'An agent', room: w.room });
+      } else if (w.t === 'pr-yes') {
+        if (pendingRef.current?.room === w.room) goPrivate(w.room);
+      } else if (w.t === 'pr-no') {
+        if (pendingRef.current?.room === w.room) {
+          setPending(null);
+          toast({ text: `${p.name} can't right now`, emoji: '🕑' });
+        }
       }
     };
     const onAttrs = (changed: Record<string, string>, p: Participant) => {
@@ -225,7 +252,7 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
       room.off(RoomEvent.ParticipantAttributesChanged, onAttrs);
       room.off(RoomEvent.ParticipantConnected, onJoin);
     };
-  }, [room, toast, addFloat, isHost]);
+  }, [room, toast, addFloat, isHost, goPrivate]);
 
   // Detect host-forced mute: mic went muted without us asking.
   const selfMute = useRef(false);
@@ -353,6 +380,37 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
     }
   }
 
+  async function startPrivate(p: Participant) {
+    if (pending) return;
+    try {
+      const r = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: `Private room: ${localParticipant.name} & ${p.name}`, host: localParticipant.name, private: true }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setHostKey(d.name, d.hostKey);
+      setPending({ to: p.identity, name: p.name || 'agent', room: d.name });
+      send({ t: 'pr-invite', room: d.name }, p.identity);
+      setTimeout(() => {
+        if (pendingRef.current?.room === d.name) {
+          setPending(null);
+          toast({ text: `${p.name} didn't answer`, emoji: '🕑' });
+        }
+      }, 45000);
+    } catch (e: any) {
+      toast({ text: e.message || 'Could not open a private room', emoji: '⚠️', color: '#ef5350' });
+    }
+  }
+  function answerInvite(yes: boolean) {
+    if (!invite) return;
+    send({ t: yes ? 'pr-yes' : 'pr-no', room: invite.room }, invite.from);
+    const r = invite.room;
+    setInvite(null);
+    if (yes) setTimeout(() => goPrivate(r), 150);
+  }
+
   function copyInvite() {
     const link = `${location.origin}/?join=${encodeURIComponent(roomName)}`;
     navigator.clipboard?.writeText(link).then(
@@ -385,7 +443,7 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
         <div className="rt-left">
           <Logo size={26} />
           <div className="rt-title">
-            <b>{meta.title || 'Calling Session'}</b>
+            <b>{inPrivate ? '🔒 Private room' : meta.title || 'Calling Session'}</b>
             <span>
               <span className="dot-live" /> Live {fmtDuration(now - createdAt)} · {count} {count === 1 ? 'agent' : 'agents'}
               {meta.host ? ` · Host: ${meta.host}` : ''}
@@ -395,8 +453,12 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
         </div>
         <div className="rt-right">
           <ConnBadge state={conn} />
-          <button className="btn ghost sm" onClick={copyInvite}><Icon name="copy" size={15} /> Invite</button>
-          {isHost && (
+          {inPrivate ? (
+            <button className="btn primary sm" onClick={() => room.disconnect()}><Icon name="leave" size={15} /> Back to floor</button>
+          ) : (
+            <button className="btn ghost sm" onClick={copyInvite}><Icon name="copy" size={15} /> Invite</button>
+          )}
+          {isHost && !inPrivate && (
             <>
               <button className="btn ghost sm" onClick={() => moderate(locked ? 'unlock' : 'lock')}>
                 <Icon name={locked ? 'unlock' : 'lock'} size={15} /> {locked ? 'Unlock' : 'Lock'}
@@ -412,7 +474,7 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
       )}
 
       <div className="room-body">
-        <Stage participants={ordered} share={share} floats={floats} now={now} isHost={isHost} onModerate={moderate} />
+        <Stage participants={ordered} share={share} floats={floats} now={now} isHost={isHost && !inPrivate} onModerate={moderate} onPrivate={inPrivate ? undefined : startPrivate} />
         {panel && (
           <aside className="side" onClick={(e) => e.stopPropagation()}>
             <div className="side-tabs">
@@ -433,7 +495,7 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
                 mode={composeMode}
               />
             ) : (
-              <PeoplePanel people={ordered} isHost={isHost} onModerate={moderate} now={now} />
+              <PeoplePanel people={ordered} isHost={isHost && !inPrivate} onModerate={moderate} now={now} onPrivate={inPrivate ? undefined : startPrivate} />
             )}
           </aside>
         )}
@@ -507,6 +569,30 @@ function RoomView({ roomName, isHost, hostKey }: { roomName: string; isHost: boo
         ))}
       </div>
 
+      {invite && (
+        <div className="pr-invite">
+          <div className="pr-ic">🔒</div>
+          <div className="pr-txt">
+            <b>{invite.name} wants a private room</b>
+            <small>Quick 1-on-1 coaching. You can come right back to the floor.</small>
+          </div>
+          <div className="btn-row">
+            <button className="btn ghost sm" onClick={() => answerInvite(false)}>Not now</button>
+            <button className="btn primary sm" onClick={() => answerInvite(true)}>Join private room</button>
+          </div>
+        </div>
+      )}
+      {pending && (
+        <div className="pr-invite waiting">
+          <span className="spinner lg" />
+          <div className="pr-txt">
+            <b>Inviting {pending.name} to a private room…</b>
+            <small>You’ll both move there as soon as they accept.</small>
+          </div>
+          <button className="btn ghost sm" onClick={() => setPending(null)}>Cancel</button>
+        </div>
+      )}
+
       {confirmEnd && (
         <div className="modal-bg" onClick={() => setConfirmEnd(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -548,7 +634,7 @@ function bestGrid(n: number, W: number, H: number, gap: number) {
   return best;
 }
 
-function Stage({ participants, share, floats, now, isHost, onModerate }: { participants: Participant[]; share?: TrackReference; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void }) {
+function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate }: { participants: Participant[]; share?: TrackReference; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 500 });
   const [page, setPage] = useState(0);
@@ -587,7 +673,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate }: { parti
         </div>
         <div className="filmstrip">
           {participants.map((p) => (
-            <Tile key={p.identity} p={p} w={220} h={124} floats={floats} now={now} isHost={isHost} onModerate={onModerate} />
+            <Tile key={p.identity} p={p} w={220} h={124} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} />
           ))}
         </div>
       </div>
@@ -599,7 +685,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate }: { parti
     <div className="stage" ref={ref}>
       <div className="grid" style={{ gridTemplateColumns: `repeat(${g.cols}, ${Math.floor(g.w)}px)`, gap }}>
         {visible.map((p) => (
-          <Tile key={p.identity} p={p} w={g.w} h={g.h} floats={floats} now={now} isHost={isHost} onModerate={onModerate} />
+          <Tile key={p.identity} p={p} w={g.w} h={g.h} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} />
         ))}
       </div>
       {participants.length === 1 && (
@@ -617,7 +703,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate }: { parti
 }
 
 /* ---------------------------------- tile ---------------------------------- */
-function Tile({ p, w, h, floats, now, isHost, onModerate }: { p: Participant; w: number; h: number; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void }) {
+function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate }: { p: Participant; w: number; h: number; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void }) {
   const camPub = p.getTrackPublication(Track.Source.Camera);
   const camRef = { participant: p, publication: camPub, source: Track.Source.Camera } as TrackReference;
   const camMuted = useIsMuted(camRef);
@@ -675,6 +761,12 @@ function Tile({ p, w, h, floats, now, isHost, onModerate }: { p: Participant; w:
           {!micMuted && <button onClick={() => onModerate('mute', p.identity)} title="Mute"><Icon name="micOff" size={14} /></button>}
           <button onClick={() => onModerate('remove', p.identity)} title="Remove from session"><Icon name="remove" size={14} /></button>
         </div>
+      )}
+
+      {onPrivate && !p.isLocal && (
+        <button className="pr-btn" onClick={() => onPrivate(p)} title={`Private room with ${p.name}`}>
+          <Icon name="lock" size={13} /> {small ? '1-on-1' : 'Private room'}
+        </button>
       )}
 
       {myFloats.map((f) => (
@@ -844,7 +936,7 @@ function ChatPanel({ msgs, me, people, onSend, onReact, onAnswer, mode }: {
 }
 
 /* --------------------------------- people --------------------------------- */
-function PeoplePanel({ people, isHost, onModerate, now }: { people: Participant[]; isHost: boolean; onModerate: (a: string, id?: string) => void; now: number }) {
+function PeoplePanel({ people, isHost, onModerate, now, onPrivate }: { people: Participant[]; isHost: boolean; onModerate: (a: string, id?: string) => void; now: number; onPrivate?: (p: Participant) => void }) {
   const [confirm, setConfirm] = useState('');
   const talking = people.filter((p) => !(p.getTrackPublication(Track.Source.Microphone)?.isMuted ?? true));
   return (
@@ -882,6 +974,9 @@ function PeoplePanel({ people, isHost, onModerate, now }: { people: Participant[
               </div>
               <span className={'pic' + (micMuted ? ' off' : ' on')}><Icon name={micMuted ? 'micOff' : 'mic'} size={15} /></span>
               <span className={'pic' + (camOn ? '' : ' off')}><Icon name={camOn ? 'cam' : 'camOff'} size={15} /></span>
+              {onPrivate && !p.isLocal && (
+                <button className="icon-btn xs pr-mini" onClick={() => onPrivate(p)} title={`Private room with ${p.name}`}><Icon name="lock" size={14} /></button>
+              )}
               {isHost && !p.isLocal && (
                 confirm === p.identity ? (
                   <span className="pconfirm">

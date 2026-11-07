@@ -4,7 +4,7 @@ export type Profile = {
   identity: string;
   name: string;
   team: string;
-  avatar: string; // small data URL, '' if none
+  avatar: string;
   camOn: boolean;
 };
 
@@ -67,7 +67,6 @@ export function fmtDuration(ms: number) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-/** Huddle quick statuses */
 export const STATUSES = {
   help: { label: 'Need Help', emoji: '🙋', color: '#ef5350', ttl: 0 },
   lead: { label: 'Got a Lead', emoji: '🔥', color: '#f5a623', ttl: 90_000 },
@@ -86,7 +85,6 @@ export function activeStatus(attrs: Record<string, string> | undefined): StatusK
   return s;
 }
 
-/** Themes */
 export const THEMES = [
   { id: 'darker', label: 'Darker', swatch: '#07080a' },
   { id: 'dark', label: 'Dark', swatch: '#121419' },
@@ -114,7 +112,6 @@ export function applyTheme(theme?: string, stage?: string) {
   localStorage.setItem('huddle-stage', s);
 }
 
-/** Shrink an image file to a small square avatar data URL. mode 'fit' shows the whole picture. */
 export function makeAvatar(src: string, mode: 'fit' | 'fill'): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();

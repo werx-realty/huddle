@@ -1,15 +1,12 @@
 {
   "name": "huddle",
   "version": "1.0.0",
-  "description": "",
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "@livekit/components-react": "^2.9.25",
     "livekit-client": "^2.23.0",
@@ -22,6 +19,5 @@
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "typescript": "^5.9.3"
-  },
-  "private": true
+  }
 }

@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     let alreadyIn = false;
     if (!host && (meta.locked || info.numParticipants >= meta.max)) {
       const people = await svc.listParticipants(room);
-      alreadyIn = people.some((p) => p.identity === identity); // page refresh / reconnect
+      alreadyIn = people.some((p) => p.identity === identity);
     }
     if (!host && meta.locked && !alreadyIn) {
       return json({ error: 'This session is locked by the host.', code: 'locked' }, 423);
