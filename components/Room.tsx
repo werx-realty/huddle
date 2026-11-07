@@ -32,6 +32,7 @@ import { Icon, Logo } from './Icon';
 import { ThemePicker } from './ThemePicker';
 import { activeStatus, colorFor, fmtDuration, initials, Profile, setHostKey, STATUSES, StatusKey } from '@/lib/client';
 import '@/app/private.css';
+import { useRecorder, whoIsRecording } from './Recorder';
 
 /* ---------------------------------- types --------------------------------- */
 type ChatMsg = {
@@ -166,6 +167,8 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const inPrivate = !!backTo;
+  const recErr = useCallback((m: string) => toast({ text: m, emoji: '⚠️', color: '#ef5350' }), []); // eslint-disable-line
+  const recorder = useRecorder(room, meta.title || 'Session', recErr);
   const goPrivate = useCallback(
     (r: string) => {
       (window as any).__huddleNav = true;
@@ -435,6 +438,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   const locked = !!meta.locked;
   const createdAt = meta.createdAt || now;
   const unanswered = msgs.filter((m) => m.q && !m.answered).length;
+  const recBy = whoIsRecording(participants);
 
   return (
     <div className={'room' + (panel ? ' with-panel' : '')} onClick={() => setPop(null)}>
@@ -468,6 +472,13 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           )}
         </div>
       </header>
+
+      {recBy && (
+        <div className="rec-bar">
+          <span className="rec-dot" /> Recording{recBy.isLocal && recorder.startedAt ? ` ${fmtDuration(now - recorder.startedAt)}` : ''} — {recBy.isLocal ? 'you are recording this session' : `${recBy.name} is recording this session`}
+          {recBy.isLocal && <button className="btn xs rec-stop" onClick={recorder.stop}>Stop &amp; save</button>}
+        </div>
+      )}
 
       {conn === ConnectionState.Reconnecting && (
         <div className="reconnect-bar"><span className="spinner" /> Connection dropped — reconnecting your audio and video…</div>
@@ -517,6 +528,12 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
             </span>
           </button>
           <ToolBtn icon={isCameraEnabled ? 'cam' : 'camOff'} label="Camera" off={!isCameraEnabled} onClick={() => localParticipant.setCameraEnabled(!isCameraEnabled).catch(() => toast({ text: 'Camera blocked or not found', emoji: '⚠️' }))} />
+          {isHost && (
+            <button className={'tool rec-tool' + (recorder.recording ? ' on' : '')} onClick={() => (recorder.recording ? recorder.stop() : recorder.start())}>
+              <span className="ti"><span className="rec-ic" /></span>
+              <span className="tl">{recorder.recording ? 'Stop rec' : 'Record'}</span>
+            </button>
+          )}
           <ToolBtn icon="screen" label={isScreenShareEnabled ? 'Stop share' : 'Share'} active={isScreenShareEnabled} onClick={() => localParticipant.setScreenShareEnabled(!isScreenShareEnabled, { audio: false }).catch(() => {})} />
           <div className="rel">
             <ToolBtn icon="bolt" label="Huddle" active={pop === 'huddle' || !!myStatus} onClick={() => setPop(pop === 'huddle' ? null : 'huddle')} />
