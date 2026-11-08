@@ -32,8 +32,21 @@ async function loadFile(key: string): Promise<{ name: string; blob: Blob } | nul
 type Box = { x: number; y: number; w: number; h: number };
 const BOX_KEY = 'huddle-script-box';
 
-export function ScriptPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ScriptPanel({ open, onClose, isAdmin, onShareAll, team, teamFocus }: {
+  open: boolean;
+  onClose: () => void;
+  isAdmin?: boolean;
+  onShareAll?: (blob: Blob, name: string) => Promise<void>;
+  team?: { name: string; url: string } | null;
+  teamFocus?: number;
+}) {
   const [file, setFile] = useState<{ name: string; url: string } | null>(null);
+  const [blob, setBlob] = useState<Blob | null>(null);
+  const [tab, setTab] = useState<'mine' | 'team'>('mine');
+  const [sending, setSending] = useState(false);
+  useEffect(() => {
+    if (teamFocus) setTab('team');
+  }, [teamFocus]);
   const [loaded, setLoaded] = useState(false);
   const [fit, setFit] = useState<'width' | 'page'>('width');
   const [box, setBox] = useState<Box>(() => {
@@ -48,7 +61,10 @@ export function ScriptPanel({ open, onClose }: { open: boolean; onClose: () => v
 
   useEffect(() => {
     loadFile('script').then((f) => {
-      if (f) setFile({ name: f.name, url: URL.createObjectURL(f.blob) });
+      if (f) {
+        setFile({ name: f.name, url: URL.createObjectURL(f.blob) });
+        setBlob(f.blob);
+      }
       setLoaded(true);
     });
   }, []);
@@ -81,12 +97,15 @@ export function ScriptPanel({ open, onClose }: { open: boolean; onClose: () => v
     }
     if (file) URL.revokeObjectURL(file.url);
     setFile({ name: f.name, url: URL.createObjectURL(f) });
+    setBlob(f);
+    setTab('mine');
     saveFile('script', { name: f.name, blob: f });
   }
 
   function remove() {
     if (file) URL.revokeObjectURL(file.url);
     setFile(null);
+    setBlob(null);
     saveFile('script', null);
   }
 
@@ -116,25 +135,52 @@ export function ScriptPanel({ open, onClose }: { open: boolean; onClose: () => v
   }
 
   if (!open) return null;
+  const showTeam = tab === 'team' && team;
+  const view = showTeam ? team : file;
 
   return (
     <div className={'script-win' + (dragging ? ' dragging' : '')} style={{ left: box.x, top: box.y, width: box.w, height: box.h }} onClick={(e) => e.stopPropagation()}>
       <div className="script-head" onPointerDown={(e) => startDrag(e, 'move')}>
         <Icon name="doc" size={16} />
-        <span className="script-title">{file ? file.name.replace(/\.pdf$/i, '') : 'My call script'}</span>
-        {file && (
+        {team ? (
+          <span className="script-tabs">
+            <button className={tab === 'mine' ? 'on' : ''} onClick={() => setTab('mine')}>My script</button>
+            <button className={tab === 'team' ? 'on' : ''} onClick={() => setTab('team')}>Team script</button>
+          </span>
+        ) : (
+          <span className="script-title">{file ? file.name.replace(/\.pdf$/i, '') : 'My call script'}</span>
+        )}
+        {team && <span className="grow" />}
+        {isAdmin && file && blob && tab === 'mine' && onShareAll && (
+          <button
+            className="btn primary xs"
+            disabled={sending}
+            title="Send this script to every agent in the room"
+            onClick={async () => {
+              setSending(true);
+              try {
+                await onShareAll(blob, file.name);
+              } finally {
+                setSending(false);
+              }
+            }}
+          >
+            {sending ? 'Sending…' : 'Send to all'}
+          </button>
+        )}
+        {view && (
           <>
             <button className="btn ghost xs" onClick={() => setFit(fit === 'width' ? 'page' : 'width')} title="Fit the whole page in the window">
               {fit === 'width' ? 'Fit' : 'Fit width'}
             </button>
-            <button className="btn ghost xs" onClick={() => inputRef.current?.click()}>Replace</button>
+            {!showTeam && <button className="btn ghost xs" onClick={() => inputRef.current?.click()}>Replace</button>}
           </>
         )}
         <button className="icon-btn xs" onClick={onClose} aria-label="Close script"><Icon name="x" size={15} /></button>
       </div>
       <div className="script-body">
-        {file ? (
-          <iframe key={file.url + fit} src={`${file.url}#toolbar=0&navpanes=0&view=${fit === 'width' ? 'FitH' : 'Fit'}`} title="Call script" />
+        {view ? (
+          <iframe key={view.url + fit} src={`${view.url}#toolbar=0&navpanes=0&view=${fit === 'width' ? 'FitH' : 'Fit'}`} title="Call script" />
         ) : loaded ? (
           <div
             className="script-drop"
@@ -151,9 +197,9 @@ export function ScriptPanel({ open, onClose }: { open: boolean; onClose: () => v
           </div>
         ) : null}
       </div>
-      {file && (
+      {view && (
         <div className="script-foot">
-          <button className="script-remove" onClick={remove}>Remove script</button>
+          {showTeam ? <span>Shared by the admin</span> : <button className="script-remove" onClick={remove}>Remove script</button>}
           <span>Drag the top bar to move · drag the corner to resize</span>
         </div>
       )}

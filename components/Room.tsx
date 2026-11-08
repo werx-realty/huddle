@@ -181,6 +181,9 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   pendingRef.current = pending;
   const inPrivate = !!backTo;
   const [scriptOpen, setScriptOpen] = useState(false);
+  const [teamScript, setTeamScript] = useState<{ name: string; url: string } | null>(null);
+  const [teamFocus, setTeamFocus] = useState(0);
+  const sharedScript = useRef<{ blob: Blob; name: string } | null>(null);
   const [shareReqs, setShareReqs] = useState<{ id: string; name: string }[]>([]);
   const [shareWait, setShareWait] = useState(false);
   const [shareOk, setShareOk] = useState(false);
@@ -312,7 +315,31 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       }
       if ('hand' in changed && changed.hand === '1') toast({ text: `${p.name} raised their hand`, emoji: '✋' });
     };
-    const onJoin = (p: Participant) => toast({ text: `${p.name || 'Someone'} joined`, emoji: '👋' });
+    const onJoin = (p: Participant) => {
+      toast({ text: `${p.name || 'Someone'} joined`, emoji: '👋' });
+      // late joiners get the team script the admin already shared
+      const s = sharedScript.current;
+      if (isHost && s) {
+        setTimeout(() => {
+          room.localParticipant
+            .sendFile(new File([s.blob], s.name, { type: 'application/pdf' }), { topic: 'team-script', mimeType: 'application/pdf', destinationIdentities: [p.identity] })
+            .catch(() => {});
+        }, 2000);
+      }
+    };
+    try {
+      room.registerByteStreamHandler('team-script', async (reader, from) => {
+        const chunks = await reader.readAll();
+        const blob = new Blob(chunks as BlobPart[], { type: 'application/pdf' });
+        setTeamScript((old) => {
+          if (old) URL.revokeObjectURL(old.url);
+          return { name: reader.info.name || 'Team script', url: URL.createObjectURL(blob) };
+        });
+        setScriptOpen(true);
+        setTeamFocus((n) => n + 1);
+        toast({ text: 'The admin shared a call script with everyone', emoji: '📄' });
+      });
+    } catch {}
     const onUnpub = (pub: any, p: Participant) => {
       // close the door again once an approved agent stops sharing
       if (isHost && !p.isLocal && pub?.source === Track.Source.ScreenShare && p.attributes?.role !== 'host') moderateRef.current('revoke-share', p.identity, true);
@@ -326,6 +353,9 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       room.off(RoomEvent.DataReceived, onData);
       room.off(RoomEvent.ParticipantAttributesChanged, onAttrs);
       room.off(RoomEvent.ParticipantConnected, onJoin);
+      try {
+        room.unregisterByteStreamHandler('team-script');
+      } catch {}
     };
   }, [room, toast, addFloat, isHost, goPrivate]);
 
@@ -716,7 +746,22 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
         </div>
       </footer>
 
-      <ScriptPanel open={scriptOpen} onClose={() => setScriptOpen(false)} />
+      <ScriptPanel
+        open={scriptOpen}
+        onClose={() => setScriptOpen(false)}
+        isAdmin={isHost}
+        team={teamScript}
+        teamFocus={teamFocus}
+        onShareAll={async (blob, name) => {
+          sharedScript.current = { blob, name };
+          try {
+            await room.localParticipant.sendFile(new File([blob], name, { type: 'application/pdf' }), { topic: 'team-script', mimeType: 'application/pdf' });
+            toast({ text: 'Script sent to everyone in the room', emoji: '📄' });
+          } catch (e: any) {
+            toast({ text: 'Could not send the script: ' + (e?.message || 'error'), emoji: '⚠️', color: '#ef5350' });
+          }
+        }}
+      />
 
       <RoomAudioRenderer muted={away} />
       {away && (
