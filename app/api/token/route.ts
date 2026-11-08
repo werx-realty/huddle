@@ -1,4 +1,4 @@
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { clean, env, isHost, json, parseMeta, roomService } from '@/lib/server';
 
 export const dynamic = 'force-dynamic';
@@ -41,6 +41,8 @@ export async function POST(req: Request) {
       canSubscribe: true,
       canPublishData: true,
       canUpdateOwnMetadata: true,
+      // agents can't screen share until the host approves
+      ...(host ? {} : { canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE] }),
     });
     return json({ token: await at.toJwt(), url, host, meta });
   } catch (e: any) {

@@ -32,6 +32,20 @@ export async function POST(req: Request) {
         );
         return json({ ok: true });
       }
+      case 'allow-share':
+      case 'revoke-share': {
+        const sources = action === 'allow-share'
+          ? [TrackSource.CAMERA, TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO]
+          : [TrackSource.CAMERA, TrackSource.MICROPHONE];
+        await svc.updateParticipant(room, identity, undefined, {
+          canSubscribe: true,
+          canPublish: true,
+          canPublishData: true,
+          canUpdateMetadata: true,
+          canPublishSources: sources,
+        });
+        return json({ ok: true });
+      }
       case 'remove':
         await svc.removeParticipant(room, identity);
         return json({ ok: true });

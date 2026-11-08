@@ -65,7 +65,10 @@ type Wire =
   | { t: 'float'; emoji: string }
   | { t: 'pr-invite'; room: string }
   | { t: 'pr-yes'; room: string }
-  | { t: 'pr-no'; room: string };
+  | { t: 'pr-no'; room: string }
+  | { t: 'share-req' }
+  | { t: 'share-ok' }
+  | { t: 'share-no' };
 type Toast = { id: string; text: string; color?: string; emoji?: string };
 type Float = { id: string; identity: string; emoji: string; x: number };
 
@@ -177,6 +180,9 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const inPrivate = !!backTo;
+  const [shareReqs, setShareReqs] = useState<{ id: string; name: string }[]>([]);
+  const [shareWait, setShareWait] = useState(false);
+  const [shareOk, setShareOk] = useState(false);
   const recErr = useCallback((m: string) => toast({ text: m, emoji: '⚠️', color: '#ef5350' }), []); // eslint-disable-line
   const recorder = useRecorder(room, meta.title || 'Session', recErr);
   const goPrivate = useCallback(
@@ -242,6 +248,14 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
         if (/^private-[a-f0-9]+$/.test(w.room)) setInvite({ from: p.identity, name: p.name || 'An agent', room: w.room });
       } else if (w.t === 'pr-yes') {
         if (pendingRef.current?.room === w.room) goPrivate(w.room);
+      } else if (w.t === 'share-req') {
+        if (isHost) setShareReqs((r) => (r.some((x) => x.id === p.identity) ? r : [...r, { id: p.identity, name: p.name || 'An agent' }]));
+      } else if (w.t === 'share-ok') {
+        setShareWait(false);
+        setShareOk(true);
+      } else if (w.t === 'share-no') {
+        setShareWait(false);
+        toast({ text: 'The admin declined your screen share', emoji: '🚫' });
       } else if (w.t === 'pr-no') {
         if (pendingRef.current?.room === w.room) {
           setPending(null);
@@ -263,10 +277,16 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       if ('hand' in changed && changed.hand === '1') toast({ text: `${p.name} raised their hand`, emoji: '✋' });
     };
     const onJoin = (p: Participant) => toast({ text: `${p.name || 'Someone'} joined`, emoji: '👋' });
+    const onUnpub = (pub: any, p: Participant) => {
+      // close the door again once an approved agent stops sharing
+      if (isHost && !p.isLocal && pub?.source === Track.Source.ScreenShare && p.attributes?.role !== 'host') moderateRef.current('revoke-share', p.identity, true);
+    };
+    room.on(RoomEvent.TrackUnpublished, onUnpub);
     room.on(RoomEvent.DataReceived, onData);
     room.on(RoomEvent.ParticipantAttributesChanged, onAttrs);
     room.on(RoomEvent.ParticipantConnected, onJoin);
     return () => {
+      room.off(RoomEvent.TrackUnpublished, onUnpub);
       room.off(RoomEvent.DataReceived, onData);
       room.off(RoomEvent.ParticipantAttributesChanged, onAttrs);
       room.off(RoomEvent.ParticipantConnected, onJoin);
@@ -407,7 +427,37 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
     setPop(null);
   }
 
-  async function moderate(action: string, identity?: string) {
+  const moderateRef = useRef<(a: string, id?: string, quiet?: boolean) => void>(() => {});
+  moderateRef.current = (a, id, quiet) => moderate(a, id, quiet);
+  const srcs = localParticipant.permissions?.canPublishSources;
+  const canShare = isHost || !srcs || srcs.length === 0 || srcs.includes(3 as any);
+  function onShareClick() {
+    if (isScreenShareEnabled) {
+      localParticipant.setScreenShareEnabled(false).catch(() => {});
+      return;
+    }
+    if (canShare) {
+      setShareOk(false);
+      localParticipant.setScreenShareEnabled(true, { audio: false }).catch(() => {});
+      return;
+    }
+    const hosts = participants.filter((p) => !p.isLocal && p.attributes?.role === 'host');
+    if (!hosts.length) {
+      toast({ text: 'No admin is in the room to approve screen sharing', emoji: '⚠️' });
+      return;
+    }
+    hosts.forEach((h) => send({ t: 'share-req' }, h.identity));
+    setShareWait(true);
+    toast({ text: 'Screen share request sent to the admin', emoji: '🖥️' });
+    setTimeout(() => setShareWait(false), 60000);
+  }
+  async function answerShare(id: string, yes: boolean) {
+    setShareReqs((r) => r.filter((x) => x.id !== id));
+    if (yes) await moderate('allow-share', id, true);
+    send({ t: yes ? 'share-ok' : 'share-no' }, id);
+  }
+
+  async function moderate(action: string, identity?: string, quiet?: boolean) {
     try {
       const r = await fetch('/api/moderate', {
         method: 'POST',
@@ -416,6 +466,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
+      if (quiet) return;
       if (action === 'lock') toast({ text: 'Session locked — no new agents can join', emoji: '🔒' });
       if (action === 'unlock') toast({ text: 'Session unlocked', emoji: '🔓' });
       if (action === 'muteall') toast({ text: 'Everyone else was muted', emoji: '🔇' });
@@ -527,7 +578,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       )}
 
       <div className="room-body">
-        <Stage participants={ordered} share={share} floats={floats} now={now} isHost={isHost && !inPrivate} onModerate={moderate} onPrivate={inPrivate ? undefined : startPrivate} />
+        <Stage participants={ordered} share={share} floats={floats} now={now} isHost={isHost && !inPrivate} onModerate={moderate} onPrivate={inPrivate ? undefined : startPrivate} onStopShare={isHost && share && !share.participant.isLocal ? () => moderate('revoke-share', share.participant.identity, true) : undefined} />
         {panel && (
           <aside className="side" onClick={(e) => e.stopPropagation()}>
             <div className="side-tabs">
@@ -583,7 +634,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
               <span className="tl">{recorder.recording ? 'Stop rec' : 'Record'}</span>
             </button>
           )}
-          <ToolBtn icon="screen" label={isScreenShareEnabled ? 'Stop share' : 'Share'} active={isScreenShareEnabled} onClick={() => localParticipant.setScreenShareEnabled(!isScreenShareEnabled, { audio: false }).catch(() => {})} />
+          <ToolBtn icon="screen" label={isScreenShareEnabled ? 'Stop share' : shareWait ? 'Waiting…' : canShare ? 'Share' : 'Ask to share'} active={isScreenShareEnabled || shareWait} onClick={onShareClick} />
           <div className="rel">
             <ToolBtn icon="bolt" label="Huddle" active={pop === 'huddle' || !!myStatus} onClick={() => setPop(pop === 'huddle' ? null : 'huddle')} />
             {pop === 'huddle' && (
@@ -645,6 +696,32 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           <div className="btn-row">
             <button className="btn ghost sm" onClick={() => answerInvite(false)}>Not now</button>
             <button className="btn primary sm" onClick={() => answerInvite(true)}>Join private room</button>
+          </div>
+        </div>
+      )}
+      {shareReqs.length > 0 && (
+        <div className="pr-invite">
+          <div className="pr-ic">🖥️</div>
+          <div className="pr-txt">
+            <b>{shareReqs[0].name} wants to share their screen</b>
+            <small>{shareReqs.length > 1 ? `+${shareReqs.length - 1} more waiting` : 'Approve to let them share with the room.'}</small>
+          </div>
+          <div className="btn-row">
+            <button className="btn ghost sm" onClick={() => answerShare(shareReqs[0].id, false)}>Deny</button>
+            <button className="btn primary sm" onClick={() => answerShare(shareReqs[0].id, true)}>Approve</button>
+          </div>
+        </div>
+      )}
+      {shareOk && !isScreenShareEnabled && (
+        <div className="pr-invite">
+          <div className="pr-ic">✅</div>
+          <div className="pr-txt">
+            <b>The admin approved your screen share</b>
+            <small>Pick the window or tab you want to show.</small>
+          </div>
+          <div className="btn-row">
+            <button className="btn ghost sm" onClick={() => setShareOk(false)}>Cancel</button>
+            <button className="btn primary sm" onClick={() => { setShareOk(false); localParticipant.setScreenShareEnabled(true, { audio: false }).catch(() => {}); }}>Start sharing</button>
           </div>
         </div>
       )}
@@ -724,7 +801,7 @@ function bestGrid(n: number, W: number, H: number, gap: number) {
   return best;
 }
 
-function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate }: { participants: Participant[]; share?: TrackReference; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void }) {
+function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate, onStopShare }: { participants: Participant[]; share?: TrackReference; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void; onStopShare?: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 500 });
   const [page, setPage] = useState(0);
@@ -759,7 +836,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate
       <div className="stage share-mode" ref={ref}>
         <div className="share-main">
           <VideoTrack trackRef={share} className="share-video" />
-          <div className="share-label"><Icon name="screen" size={14} /> {share.participant.name} is sharing their screen</div>
+          <div className="share-label"><Icon name="screen" size={14} /> {share.participant.name} is sharing their screen{onStopShare && <button className="btn xs danger" style={{ marginLeft: 8 }} onClick={onStopShare}>Stop their share</button>}</div>
         </div>
         <div className="filmstrip">
           {participants.map((p) => (
