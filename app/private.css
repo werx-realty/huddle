@@ -65,3 +65,5 @@
 .script-tabs{display:inline-flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:2px}
 .script-tabs button{padding:3px 10px;border-radius:7px;font-size:12px;font-weight:600;color:var(--text-3)}
 .script-tabs button.on{background:var(--accent);color:#fff}
+.lb-title{color:#fff;font-size:13px;font-weight:800;margin-right:10px}
+[data-theme='white'] .lb-title{color:var(--text)}

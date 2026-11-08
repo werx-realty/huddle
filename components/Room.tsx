@@ -864,7 +864,7 @@ function Leaderboard({ people }: { people: Participant[] }) {
     .slice(0, 5);
   return (
     <div className="lb" title="Top 5 — appointments set this session">
-      <span className="lb-title">🏆 Top 5</span>
+      <span className="lb-title">Top 5</span>
       {top.length === 0 ? (
         <span className="lb-empty">First appointment takes #1</span>
       ) : (
