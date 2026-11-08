@@ -67,6 +67,7 @@ type Wire =
   | { t: 'pr-invite'; room: string }
   | { t: 'pr-yes'; room: string }
   | { t: 'pr-no'; room: string }
+  | { t: 'del'; id: string }
   | { t: 'share-req' }
   | { t: 'share-ok' }
   | { t: 'share-no' };
@@ -285,6 +286,8 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
         if (/^private-[a-f0-9]+$/.test(w.room)) setInvite({ from: p.identity, name: p.name || 'An agent', room: w.room });
       } else if (w.t === 'pr-yes') {
         if (pendingRef.current?.room === w.room) goPrivate(w.room);
+      } else if (w.t === 'del') {
+        setMsgs((x) => x.filter((m) => !(m.id === w.id && m.from === p.identity)));
       } else if (w.t === 'share-req') {
         if (isHost) setShareReqs((r) => (r.some((x) => x.id === p.identity) ? r : [...r, { id: p.identity, name: p.name || 'An agent' }]));
       } else if (w.t === 'share-ok') {
@@ -378,6 +381,14 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
     try {
       localStorage.setItem(apptKey, String(n));
     } catch {}
+    if (d < 0) {
+      // undo: remove my most recent "Appointment set" message for everyone
+      const last = [...msgs].reverse().find((m) => m.kind === 'appt' && m.from === localParticipant.identity);
+      if (last) {
+        setMsgs((x) => x.filter((m) => m.id !== last.id));
+        send({ t: 'del', id: last.id });
+      }
+    }
     if (d > 0) {
       setApptBump((b) => b + 1);
       burst();
