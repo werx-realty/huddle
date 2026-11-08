@@ -46,7 +46,7 @@ type ChatMsg = {
   q?: boolean;
   answered?: boolean;
   reacts?: Record<string, string[]>;
-  kind?: 'win' | 'lead';
+  kind?: 'win' | 'lead' | 'appt';
 };
 type Wire =
   | ({ t: 'msg' } & Omit<ChatMsg, 'reacts' | 'answered'>)
@@ -240,6 +240,11 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
     };
     const onAttrs = (changed: Record<string, string>, p: Participant) => {
       if (p.isLocal) return;
+      if ('appts' in changed) {
+        const n = Number(changed.appts || 0);
+        const before = apptSeen.current.get(p.identity) ?? 0;
+        apptSeen.current.set(p.identity, n);
+      }
       if ('status' in changed && changed.status) {
         const s = STATUSES[changed.status as StatusKey];
         if (s && (changed.status !== 'break' || isHost)) toast({ text: `${p.name} — ${s.label}`, emoji: s.emoji, color: s.color });
@@ -258,6 +263,30 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   }, [room, toast, addFloat, isHost, goPrivate]);
 
   // Detect host-forced mute: mic went muted without us asking.
+  const apptSeen = useRef(new Map<string, number>());
+  const myAppts = Number(localParticipant.attributes?.appts || 0);
+  const apptKey = 'huddle-appts:' + roomName;
+  const apptRestored = useRef(false);
+  useEffect(() => {
+    if (conn !== ConnectionState.Connected || apptRestored.current) return;
+    apptRestored.current = true;
+    room.remoteParticipants.forEach((p) => apptSeen.current.set(p.identity, Number(p.attributes?.appts || 0)));
+    const saved = Number(localStorage.getItem(apptKey) || 0);
+    if (saved > 0) localParticipant.setAttributes({ appts: String(saved) }).catch(() => {});
+  }, [conn]); // eslint-disable-line
+  const [apptBump, setApptBump] = useState(0);
+  function addAppt(d: number) {
+    const n = Math.max(0, myAppts + d);
+    localParticipant.setAttributes({ appts: String(n) }).catch(() => {});
+    try {
+      localStorage.setItem(apptKey, String(n));
+    } catch {}
+    if (d > 0) {
+      setApptBump((b) => b + 1);
+      postMsg({ text: `📅 Appointment set! (${n} today)`, kind: 'appt' });
+    }
+  }
+
   const selfMute = useRef(false);
   const prevMic = useRef(isMicrophoneEnabled);
   useEffect(() => {
@@ -343,7 +372,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
     }
   }
 
-  function postMsg(m: { text: string; to?: string; toName?: string; q?: boolean; kind?: 'win' | 'lead' }) {
+  function postMsg(m: { text: string; to?: string; toName?: string; q?: boolean; kind?: 'win' | 'lead' | 'appt' }) {
     const text = m.text.trim();
     if (!text) return;
     const msg: ChatMsg = { id: uid(), from: localParticipant.identity, name: localParticipant.name || 'Me', text, ts: Date.now(), to: m.to, toName: m.toName, q: m.q, kind: m.kind };
@@ -526,6 +555,13 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
               <b>{isMicrophoneEnabled ? 'Mic is LIVE' : 'Muted'}</b>
               <small>{isMicrophoneEnabled ? 'Everyone hears you · tap to mute' : 'Tap to unmute & talk'}</small>
             </span>
+          </button>
+          <button key={apptBump} className={'appt-btn' + (apptBump ? ' bump' : '')} onClick={() => addAppt(1)} title="Tap each time you set an appointment">
+            <b>{myAppts}</b>
+            <small>Appt Set</small>
+            {myAppts > 0 && (
+              <span className="appt-minus" role="button" title="Undo one" onClick={(e) => { e.stopPropagation(); addAppt(-1); }}>−</span>
+            )}
           </button>
           <ToolBtn icon={isCameraEnabled ? 'cam' : 'camOff'} label="Camera" off={!isCameraEnabled} onClick={() => localParticipant.setCameraEnabled(!isCameraEnabled).catch(() => toast({ text: 'Camera blocked or not found', emoji: '⚠️' }))} />
           {isHost && (
@@ -733,6 +769,7 @@ function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate }: { p: Part
   const avatar = attributes?.avatar;
   const team = attributes?.team;
   const host = attributes?.role === 'host';
+  const appts = Number(attributes?.appts || 0);
   const showVideo = !!camPub && !camMuted;
   const small = w < 260;
   const myFloats = floats.filter((f) => f.identity === p.identity);
@@ -770,7 +807,9 @@ function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate }: { p: Part
           {host && <span className="host-tag">Host</span>}
           {team && !small && <span className="team">{team}</span>}
         </span>
+        <span className="grow" />
         {!showVideo && !small && <span className="cam-off-chip"><Icon name="camOff" size={13} /></span>}
+        {appts > 0 && <span className="appt-chip" title={`${appts} appointment${appts === 1 ? '' : 's'} set`}>📅 {appts}</span>}
       </div>
 
       {isHost && !p.isLocal && (
@@ -987,6 +1026,7 @@ function PeoplePanel({ people, isHost, onModerate, now, onPrivate }: { people: P
                 <div className="psub">
                   {st ? <span style={{ color: STATUSES[st].color }}>{STATUSES[st].emoji} {STATUSES[st].label}</span> : <span>{p.attributes?.team || 'Agent'}</span>}
                   <span>· {fmtDuration(joined)}</span>
+                  {Number(p.attributes?.appts || 0) > 0 && <span className="appt-mini">· 📅 {p.attributes?.appts}</span>}
                 </div>
               </div>
               <span className={'pic' + (micMuted ? ' off' : ' on')}><Icon name={micMuted ? 'micOff' : 'mic'} size={15} /></span>
