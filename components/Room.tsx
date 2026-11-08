@@ -484,6 +484,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           </div>
           {locked && <span className="tag"><Icon name="lock" size={12} /> Locked</span>}
         </div>
+        <Leaderboard people={participants} />
         <div className="rt-right">
           <ConnBadge state={conn} />
           {inPrivate ? (
@@ -657,6 +658,30 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function Leaderboard({ people }: { people: Participant[] }) {
+  const top = people
+    .map((p) => ({ id: p.identity, name: p.name || 'Agent', n: Number(p.attributes?.appts || 0), me: p.isLocal }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name))
+    .slice(0, 5);
+  return (
+    <div className="lb" title="Top 5 — appointments set this session">
+      <span className="lb-title">🏆 Top 5</span>
+      {top.length === 0 ? (
+        <span className="lb-empty">First appointment takes #1</span>
+      ) : (
+        top.map((x, i) => (
+          <span key={x.id} className={'lb-item r' + (i + 1) + (x.me ? ' me' : '')}>
+            <i>{i + 1}</i>
+            <span className="lb-name">{x.name.split(' ')[0]}</span>
+            <b>{x.n}</b>
+          </span>
+        ))
       )}
     </div>
   );
