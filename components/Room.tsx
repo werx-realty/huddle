@@ -33,6 +33,16 @@ import { ThemePicker } from './ThemePicker';
 import { activeStatus, colorFor, fmtDuration, initials, Profile, setHostKey, STATUSES, StatusKey } from '@/lib/client';
 import '@/app/private.css';
 import { useRecorder, whoIsRecording } from './Recorder';
+import confetti from 'canvas-confetti';
+
+function burst() {
+  const colors = ['#3d7bff', '#f5a623', '#ffffff', '#9b7bff', '#ef4d4d'];
+  confetti({ particleCount: 140, spread: 90, startVelocity: 55, origin: { x: 0.5, y: 0.9 }, colors, zIndex: 200 });
+  setTimeout(() => {
+    confetti({ particleCount: 80, angle: 60, spread: 70, origin: { x: 0, y: 0.8 }, colors, zIndex: 200 });
+    confetti({ particleCount: 80, angle: 120, spread: 70, origin: { x: 1, y: 0.8 }, colors, zIndex: 200 });
+  }, 180);
+}
 
 /* ---------------------------------- types --------------------------------- */
 type ChatMsg = {
@@ -218,6 +228,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       if (w.t === 'msg') {
         const m: ChatMsg = { id: w.id, from: p.identity, name: p.name || 'Agent', text: String(w.text).slice(0, 1000), ts: w.ts, to: w.to, toName: w.toName, q: w.q, kind: w.kind };
         setMsgs((x) => (x.some((y) => y.id === m.id) ? x : [...x, m]));
+        if (m.kind === 'appt') burst();
         if (panelRef.current !== 'chat') setUnread((u) => u + 1);
         if (m.to) toast({ text: `Private message from ${m.name}`, emoji: '✉️' });
         else if (m.q && panelRef.current !== 'chat') toast({ text: `${m.name} asked a question`, emoji: '❓', color: STATUSES.question.color });
@@ -283,6 +294,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
     } catch {}
     if (d > 0) {
       setApptBump((b) => b + 1);
+      burst();
       postMsg({ text: `📅 Appointment set! (${n} today)`, kind: 'appt' });
     }
   }
