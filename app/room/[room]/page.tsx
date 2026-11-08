@@ -102,6 +102,8 @@ export default function RoomPage() {
           setLost((n) => n + 1);
         } else if (reason) {
           router.push('/?msg=' + encodeURIComponent(reason));
+        } else if (backTo && new URLSearchParams(location.search).get('popup') && window.opener) {
+          window.close();
         } else if (backTo) {
           window.location.assign('/room/' + encodeURIComponent(backTo));
         } else {

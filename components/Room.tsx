@@ -30,7 +30,7 @@ import {
 } from 'livekit-client';
 import { Icon, Logo } from './Icon';
 import { ThemePicker } from './ThemePicker';
-import { activeStatus, colorFor, fmtDuration, initials, Profile, setHostKey, STATUSES, StatusKey } from '@/lib/client';
+import { activeStatus, colorFor, fmtDuration, getHostKey, initials, Profile, setHostKey, STATUSES, StatusKey } from '@/lib/client';
 import '@/app/private.css';
 import { useRecorder, whoIsRecording } from './Recorder';
 import confetti from 'canvas-confetti';
@@ -143,7 +143,6 @@ export function HuddleRoom(props: {
       className="room-root"
     >
       <RoomView {...props} />
-      <RoomAudioRenderer />
     </LiveKitRoom>
   );
 }
@@ -187,13 +186,46 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   const [shareOk, setShareOk] = useState(false);
   const recErr = useCallback((m: string) => toast({ text: m, emoji: '⚠️', color: '#ef5350' }), []); // eslint-disable-line
   const recorder = useRecorder(room, meta.title || 'Session', recErr);
+  // the floor's admin keeps admin powers (recording) inside 1-on-1 rooms too
+  const floorAdmin = inPrivate ? !!getHostKey(backTo!) : isHost;
+  const popupRef = useRef<Window | null>(null);
+  const recordingRef = useRef(false);
+  recordingRef.current = recorder.recording;
+  const [away, setAway] = useState(false);
   const goPrivate = useCallback(
     (r: string) => {
+      const url = '/room/' + encodeURIComponent(r) + '?back=' + encodeURIComponent(roomName);
+      // admin is recording the floor: open the 1-on-1 in a new tab so this tab keeps recording
+      if (recordingRef.current) {
+        const w = popupRef.current && !popupRef.current.closed ? popupRef.current : window.open('', '_blank');
+        popupRef.current = null;
+        if (w) {
+          w.location.href = url + '&popup=1';
+          return;
+        }
+      }
       (window as any).__huddleNav = true;
-      window.location.assign('/room/' + encodeURIComponent(r) + '?back=' + encodeURIComponent(roomName));
+      window.location.assign(url);
     },
     [roomName],
   );
+  // know when this agent is busy in a 1-on-1 tab (silence the floor audio here meanwhile)
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const bc = new BroadcastChannel('huddle-' + (inPrivate ? backTo : roomName));
+    if (inPrivate && new URLSearchParams(location.search).get('popup')) {
+      bc.postMessage('pr-open');
+      const bye = () => bc.postMessage('pr-close');
+      window.addEventListener('pagehide', bye);
+      return () => {
+        bye();
+        window.removeEventListener('pagehide', bye);
+        bc.close();
+      };
+    }
+    bc.onmessage = (e) => setAway(e.data === 'pr-open');
+    return () => bc.close();
+  }, [inPrivate, backTo, roomName]);
 
   // open chat on the right by default on wide screens
   useEffect(() => {
@@ -261,6 +293,8 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       } else if (w.t === 'pr-no') {
         if (pendingRef.current?.room === w.room) {
           setPending(null);
+          popupRef.current?.close();
+          popupRef.current = null;
           toast({ text: `${p.name} can't right now`, emoji: '🕑' });
         }
       }
@@ -479,6 +513,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
 
   async function startPrivate(p: Participant) {
     if (pending) return;
+    if (recorder.recording) popupRef.current = window.open('about:blank', '_blank');
     try {
       const r = await fetch('/api/rooms', {
         method: 'POST',
@@ -493,6 +528,8 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       setTimeout(() => {
         if (pendingRef.current?.room === d.name) {
           setPending(null);
+          popupRef.current?.close();
+          popupRef.current = null;
           toast({ text: `${p.name} didn't answer`, emoji: '🕑' });
         }
       }, 45000);
@@ -505,6 +542,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
     send({ t: yes ? 'pr-yes' : 'pr-no', room: invite.room }, invite.from);
     const r = invite.room;
     setInvite(null);
+    if (yes && recorder.recording) popupRef.current = window.open('about:blank', '_blank');
     if (yes) setTimeout(() => goPrivate(r), 150);
   }
 
@@ -631,7 +669,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           </button>
           <ToolBtn icon="doc" label="Script" active={scriptOpen} onClick={() => setScriptOpen(!scriptOpen)} />
           <ToolBtn icon={isCameraEnabled ? 'cam' : 'camOff'} label="Camera" off={!isCameraEnabled} onClick={() => localParticipant.setCameraEnabled(!isCameraEnabled).catch(() => toast({ text: 'Camera blocked or not found', emoji: '⚠️' }))} />
-          {isHost && !inPrivate && (
+          {floorAdmin && (
             <button className={'tool rec-tool' + (recorder.recording ? ' on' : '')} onClick={() => (recorder.recording ? recorder.stop() : recorder.start())}>
               <span className="ti"><span className="rec-ic" /></span>
               <span className="tl">{recorder.recording ? 'Stop rec' : 'Record'}</span>
@@ -679,6 +717,11 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       </footer>
 
       <ScriptPanel open={scriptOpen} onClose={() => setScriptOpen(false)} />
+
+      <RoomAudioRenderer muted={away} />
+      {away && (
+        <div className="away-bar">You’re in a 1-on-1 in another tab — this room is muted for you{recorder.recording ? ' and still recording' : ''}.</div>
+      )}
 
       <StartAudio label="Click to turn on room audio" className="start-audio" />
 
@@ -737,7 +780,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
             <b>Inviting {pending.name} to a private room…</b>
             <small>You’ll both move there as soon as they accept.</small>
           </div>
-          <button className="btn ghost sm" onClick={() => setPending(null)}>Cancel</button>
+          <button className="btn ghost sm" onClick={() => { setPending(null); popupRef.current?.close(); popupRef.current = null; }}>Cancel</button>
         </div>
       )}
 
