@@ -34,6 +34,7 @@ import { activeStatus, colorFor, fmtDuration, initials, Profile, setHostKey, STA
 import '@/app/private.css';
 import { useRecorder, whoIsRecording } from './Recorder';
 import confetti from 'canvas-confetti';
+import { ScriptPanel } from './ScriptPanel';
 
 function burst() {
   const colors = ['#3d7bff', '#f5a623', '#ffffff', '#9b7bff', '#ef4d4d'];
@@ -180,6 +181,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const inPrivate = !!backTo;
+  const [scriptOpen, setScriptOpen] = useState(false);
   const [shareReqs, setShareReqs] = useState<{ id: string; name: string }[]>([]);
   const [shareWait, setShareWait] = useState(false);
   const [shareOk, setShareOk] = useState(false);
@@ -627,6 +629,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
               <span className="appt-minus" role="button" title="Undo one" onClick={(e) => { e.stopPropagation(); addAppt(-1); }}>−</span>
             )}
           </button>
+          <ToolBtn icon="doc" label="Script" active={scriptOpen} onClick={() => setScriptOpen(!scriptOpen)} />
           <ToolBtn icon={isCameraEnabled ? 'cam' : 'camOff'} label="Camera" off={!isCameraEnabled} onClick={() => localParticipant.setCameraEnabled(!isCameraEnabled).catch(() => toast({ text: 'Camera blocked or not found', emoji: '⚠️' }))} />
           {isHost && (
             <button className={'tool rec-tool' + (recorder.recording ? ' on' : '')} onClick={() => (recorder.recording ? recorder.stop() : recorder.start())}>
@@ -674,6 +677,8 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           <button className="leave-btn" onClick={() => room.disconnect()}><Icon name="leave" size={18} /> Leave</button>
         </div>
       </footer>
+
+      <ScriptPanel open={scriptOpen} onClose={() => setScriptOpen(false)} />
 
       <StartAudio label="Click to turn on room audio" className="start-audio" />
 
