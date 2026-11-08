@@ -35,6 +35,7 @@ import '@/app/private.css';
 import { useRecorder, whoIsRecording } from './Recorder';
 import confetti from 'canvas-confetti';
 import { ScriptPanel } from './ScriptPanel';
+import { DmWindow } from './DmWindow';
 
 function burst() {
   const colors = ['#3d7bff', '#f5a623', '#ffffff', '#9b7bff', '#ef4d4d'];
@@ -186,6 +187,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   pendingRef.current = pending;
   const inPrivate = !!backTo;
   const [scriptOpen, setScriptOpen] = useState(false);
+  const [dm, setDm] = useState<{ id: string; name: string } | null>(null);
   // Listen-in: admin <-> one agent private audio inside the floor
   const [listenReq, setListenReq] = useState<{ id: string; name: string } | null>(null); // agent sees this
   const [listen, setListen] = useState<{ id: string; name: string; role: 'admin' | 'agent' } | null>(null);
@@ -283,7 +285,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
         setMsgs((x) => (x.some((y) => y.id === m.id) ? x : [...x, m]));
         if (m.kind === 'appt') burst();
         if (panelRef.current !== 'chat') setUnread((u) => u + 1);
-        if (m.to) toast({ text: `Private message from ${m.name}`, emoji: '✉️' });
+        if (m.to) setDm((d) => d ?? { id: p.identity, name: p.name || 'Agent' });
         else if (m.q && panelRef.current !== 'chat') toast({ text: `${m.name} asked a question`, emoji: '❓', color: STATUSES.question.color });
       } else if (w.t === 'react') {
         setMsgs((x) => x.map((m) => (m.id === w.id ? toggleReact(m, w.emoji, p.identity) : m)));
@@ -716,7 +718,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       )}
 
       <div className="room-body">
-        <Stage participants={ordered} share={share} floats={floats} now={now} isHost={isHost && !inPrivate} onModerate={moderate} onPrivate={inPrivate ? undefined : startPrivate} onListen={isHost && !inPrivate ? requestListen : undefined} listeningTo={listen?.role === 'admin' ? listen.id : undefined} onStopShare={isHost && share && !share.participant.isLocal ? () => moderate('revoke-share', share.participant.identity, true) : undefined} />
+        <Stage participants={ordered} share={share} floats={floats} now={now} isHost={isHost && !inPrivate} onModerate={moderate} onPrivate={inPrivate ? undefined : startPrivate} onListen={isHost && !inPrivate ? requestListen : undefined} listeningTo={listen?.role === 'admin' ? listen.id : undefined} onChat={(p) => setDm({ id: p.identity, name: p.name || 'Agent' })} onStopShare={isHost && share && !share.participant.isLocal ? () => moderate('revoke-share', share.participant.identity, true) : undefined} />
         {panel && (
           <aside className="side" onClick={(e) => e.stopPropagation()}>
             <div className="side-tabs">
@@ -813,6 +815,16 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           <button className="leave-btn" onClick={() => room.disconnect()}><Icon name="leave" size={18} /> Leave</button>
         </div>
       </footer>
+
+      {dm && (
+        <DmWindow
+          peer={dm}
+          me={localParticipant.identity}
+          msgs={msgs}
+          onSend={(text) => postMsg({ text, to: dm.id, toName: dm.name })}
+          onClose={() => setDm(null)}
+        />
+      )}
 
       <ScriptPanel
         open={scriptOpen}
@@ -981,7 +993,7 @@ function bestGrid(n: number, W: number, H: number, gap: number) {
   return best;
 }
 
-function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate, onStopShare, onListen, listeningTo }: { participants: Participant[]; share?: TrackReference; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void; onStopShare?: () => void; onListen?: (p: Participant) => void; listeningTo?: string }) {
+function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate, onStopShare, onListen, listeningTo, onChat }: { participants: Participant[]; share?: TrackReference; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void; onStopShare?: () => void; onListen?: (p: Participant) => void; listeningTo?: string; onChat?: (p: Participant) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 500 });
   const [page, setPage] = useState(0);
@@ -1020,7 +1032,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate
         </div>
         <div className="filmstrip">
           {participants.map((p) => (
-            <Tile key={p.identity} p={p} w={220} h={124} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} onListen={onListen} listeningTo={listeningTo} />
+            <Tile key={p.identity} p={p} w={220} h={124} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} onListen={onListen} listeningTo={listeningTo} onChat={onChat} />
           ))}
         </div>
       </div>
@@ -1032,7 +1044,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate
     <div className="stage" ref={ref}>
       <div className="grid" style={{ gridTemplateColumns: `repeat(${g.cols}, ${Math.floor(g.w)}px)`, gap }}>
         {visible.map((p) => (
-          <Tile key={p.identity} p={p} w={g.w} h={g.h} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} onListen={onListen} listeningTo={listeningTo} />
+          <Tile key={p.identity} p={p} w={g.w} h={g.h} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} onListen={onListen} listeningTo={listeningTo} onChat={onChat} />
         ))}
       </div>
       {participants.length === 1 && (
@@ -1050,7 +1062,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate
 }
 
 /* ---------------------------------- tile ---------------------------------- */
-function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate, onListen, listeningTo }: { p: Participant; w: number; h: number; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void; onListen?: (p: Participant) => void; listeningTo?: string }) {
+function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate, onListen, listeningTo, onChat }: { p: Participant; w: number; h: number; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void; onListen?: (p: Participant) => void; listeningTo?: string; onChat?: (p: Participant) => void }) {
   const camPub = p.getTrackPublication(Track.Source.Camera);
   const camRef = { participant: p, publication: camPub, source: Track.Source.Camera } as TrackReference;
   const camMuted = useIsMuted(camRef);
@@ -1111,6 +1123,9 @@ function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate, onListen, l
           {!micMuted && <button onClick={() => onModerate('mute', p.identity)} title="Mute"><Icon name="micOff" size={14} /></button>}
           <button onClick={() => onModerate('remove', p.identity)} title="Remove from session"><Icon name="remove" size={14} /></button>
         </div>
+      )}
+      {onChat && !p.isLocal && (
+        <button className="chat-btn" onClick={() => onChat(p)} title={`Private chat with ${p.name}`}>💬 {small ? '' : 'Chat'}</button>
       )}
       {onListen && !p.isLocal && listeningTo !== p.identity && (
         <button className="listen-btn" onClick={() => onListen(p)} title={`Listen in on ${p.name}'s call`}>🎧 {small ? '' : 'Listen in'}</button>
