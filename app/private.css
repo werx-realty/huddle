@@ -68,3 +68,7 @@
 .lb-title{color:#fff;font-size:13px;font-weight:800;margin-right:10px}
 [data-theme='white'] .lb-title{color:var(--text)}
 .lb-item.me{box-shadow:none}
+.lb-item.me{box-shadow:0 0 0 1px #fff}
+.lb-item.r1{border-color:#fff}
+[data-theme='white'] .lb-item.me{box-shadow:0 0 0 1px var(--text)}
+[data-theme='white'] .lb-item.r1{border-color:var(--text)}
