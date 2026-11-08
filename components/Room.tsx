@@ -631,7 +631,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           </button>
           <ToolBtn icon="doc" label="Script" active={scriptOpen} onClick={() => setScriptOpen(!scriptOpen)} />
           <ToolBtn icon={isCameraEnabled ? 'cam' : 'camOff'} label="Camera" off={!isCameraEnabled} onClick={() => localParticipant.setCameraEnabled(!isCameraEnabled).catch(() => toast({ text: 'Camera blocked or not found', emoji: '⚠️' }))} />
-          {isHost && (
+          {isHost && !inPrivate && (
             <button className={'tool rec-tool' + (recorder.recording ? ' on' : '')} onClick={() => (recorder.recording ? recorder.stop() : recorder.start())}>
               <span className="ti"><span className="rec-ic" /></span>
               <span className="tl">{recorder.recording ? 'Stop rec' : 'Record'}</span>
