@@ -68,6 +68,10 @@ type Wire =
   | { t: 'pr-yes'; room: string }
   | { t: 'pr-no'; room: string }
   | { t: 'del'; id: string }
+  | { t: 'listen-req' }
+  | { t: 'listen-ok' }
+  | { t: 'listen-no' }
+  | { t: 'listen-end' }
   | { t: 'share-req' }
   | { t: 'share-ok' }
   | { t: 'share-no' };
@@ -182,6 +186,11 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
   pendingRef.current = pending;
   const inPrivate = !!backTo;
   const [scriptOpen, setScriptOpen] = useState(false);
+  // Listen-in: admin <-> one agent private audio inside the floor
+  const [listenReq, setListenReq] = useState<{ id: string; name: string } | null>(null); // agent sees this
+  const [listen, setListen] = useState<{ id: string; name: string; role: 'admin' | 'agent' } | null>(null);
+  const listenRef = useRef(listen);
+  listenRef.current = listen;
   const [teamScript, setTeamScript] = useState<{ name: string; url: string } | null>(null);
   const [teamFocus, setTeamFocus] = useState(0);
   const sharedScript = useRef<{ blob: Blob; name: string } | null>(null);
@@ -286,6 +295,14 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
         if (/^private-[a-f0-9]+$/.test(w.room)) setInvite({ from: p.identity, name: p.name || 'An agent', room: w.room });
       } else if (w.t === 'pr-yes') {
         if (pendingRef.current?.room === w.room) goPrivate(w.room);
+      } else if (w.t === 'listen-req') {
+        if (p.attributes?.role === 'host') setListenReq({ id: p.identity, name: p.name || 'The admin' });
+      } else if (w.t === 'listen-ok') {
+        startListen({ id: p.identity, name: p.name || 'Agent', role: 'admin' });
+      } else if (w.t === 'listen-no') {
+        toast({ text: `${p.name} said not right now`, emoji: '🎧' });
+      } else if (w.t === 'listen-end') {
+        if (listenRef.current?.id === p.identity) stopListen(false);
       } else if (w.t === 'del') {
         setMsgs((x) => x.filter((m) => !(m.id === w.id && m.from === p.identity)));
       } else if (w.t === 'share-req') {
@@ -320,6 +337,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
     };
     const onJoin = (p: Participant) => {
       toast({ text: `${p.name || 'Someone'} joined`, emoji: '👋' });
+      if (listenRef.current) setTimeout(() => restrictAudio(listenRef.current!.id), 500);
       // late joiners get the team script the admin already shared
       const s = sharedScript.current;
       if (isHost && s) {
@@ -504,6 +522,45 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
     setPop(null);
   }
 
+  // only `allowId` may hear my audio; everyone else still gets my camera
+  function restrictAudio(allowId: string) {
+    const vid = localParticipant.getTrackPublication(Track.Source.Camera)?.trackSid;
+    const others = participants.filter((p) => !p.isLocal && p.identity !== allowId).map((p) => p.identity);
+    room.remoteParticipants.forEach((p) => {
+      if (p.identity !== allowId && !others.includes(p.identity)) others.push(p.identity);
+    });
+    localParticipant.setTrackSubscriptionPermissions(false, [
+      { participantIdentity: allowId, allowAll: true },
+      ...others.map((id) => ({ participantIdentity: id, allowAll: false, allowedTrackSids: vid ? [vid] : [] })),
+    ]);
+  }
+  function startListen(l: { id: string; name: string; role: 'admin' | 'agent' }) {
+    restrictAudio(l.id);
+    setListen(l);
+    if (l.role === 'agent') setMic(true);
+    else toast({ text: `Listening to ${l.name}. Unmute to coach them privately.`, emoji: '🎧' });
+  }
+  function stopListen(notify = true) {
+    const l = listenRef.current;
+    if (!l) return;
+    if (notify) send({ t: 'listen-end' }, l.id);
+    localParticipant.setTrackSubscriptionPermissions(true);
+    setMic(false);
+    setListen(null);
+  }
+  function requestListen(p: Participant) {
+    if (listenRef.current) stopListen();
+    send({ t: 'listen-req' }, p.identity);
+    toast({ text: `Asking ${p.name} to let you listen in…`, emoji: '🎧' });
+  }
+  function answerListen(yes: boolean) {
+    const r = listenReq;
+    if (!r) return;
+    setListenReq(null);
+    send({ t: yes ? 'listen-ok' : 'listen-no' }, r.id);
+    if (yes) startListen({ id: r.id, name: r.name, role: 'agent' });
+  }
+
   const moderateRef = useRef<(a: string, id?: string, quiet?: boolean) => void>(() => {});
   moderateRef.current = (a, id, quiet) => moderate(a, id, quiet);
   const srcs = localParticipant.permissions?.canPublishSources;
@@ -659,7 +716,7 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
       )}
 
       <div className="room-body">
-        <Stage participants={ordered} share={share} floats={floats} now={now} isHost={isHost && !inPrivate} onModerate={moderate} onPrivate={inPrivate ? undefined : startPrivate} onStopShare={isHost && share && !share.participant.isLocal ? () => moderate('revoke-share', share.participant.identity, true) : undefined} />
+        <Stage participants={ordered} share={share} floats={floats} now={now} isHost={isHost && !inPrivate} onModerate={moderate} onPrivate={inPrivate ? undefined : startPrivate} onListen={isHost && !inPrivate ? requestListen : undefined} listeningTo={listen?.role === 'admin' ? listen.id : undefined} onStopShare={isHost && share && !share.participant.isLocal ? () => moderate('revoke-share', share.participant.identity, true) : undefined} />
         {panel && (
           <aside className="side" onClick={(e) => e.stopPropagation()}>
             <div className="side-tabs">
@@ -697,8 +754,8 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           <button className={'mic-btn ' + (isMicrophoneEnabled ? 'live' : 'muted')} onClick={() => setMic(!isMicrophoneEnabled)} aria-pressed={isMicrophoneEnabled}>
             <span className="mic-ic"><Icon name={isMicrophoneEnabled ? 'mic' : 'micOff'} size={24} /></span>
             <span className="mic-txt">
-              <b>{isMicrophoneEnabled ? 'Mic is LIVE' : 'Muted'}</b>
-              <small>{isMicrophoneEnabled ? 'Everyone hears you · tap to mute' : 'Tap to unmute & talk'}</small>
+              <b>{isMicrophoneEnabled ? (listen ? 'Private LIVE' : 'Mic is LIVE') : 'Muted'}</b>
+              <small>{isMicrophoneEnabled ? (listen ? `Only ${listen.name} hears you` : 'Everyone hears you · tap to mute') : listen ? `Tap to talk to ${listen.name} only` : 'Tap to unmute & talk'}</small>
             </span>
           </button>
           <button key={apptBump} className={'appt-btn' + (apptBump ? ' bump' : '')} onClick={() => addAppt(1)} title="Tap each time you set an appointment">
@@ -803,6 +860,25 @@ function RoomView({ roomName, isHost, hostKey, backTo }: { roomName: string; isH
           </div>
         </div>
       )}
+      {listenReq && (
+        <div className="pr-invite">
+          <div className="pr-ic">🎧</div>
+          <div className="pr-txt">
+            <b>{listenReq.name} wants to listen in on your call</b>
+            <small>Your mic turns on for {listenReq.name} only — nobody else in the room hears you.</small>
+          </div>
+          <div className="btn-row">
+            <button className="btn ghost sm" onClick={() => answerListen(false)}>Not now</button>
+            <button className="btn primary sm" onClick={() => answerListen(true)}>Allow</button>
+          </div>
+        </div>
+      )}
+      {listen && (
+        <div className="listen-bar">
+          🎧 {listen.role === 'admin' ? `Listening to ${listen.name}` : `${listen.name} is listening to your call`}
+          <button className="btn xs" onClick={() => stopListen()}>{listen.role === 'admin' ? 'Stop listening' : 'End'}</button>
+        </div>
+      )}
       {shareReqs.length > 0 && (
         <div className="pr-invite">
           <div className="pr-ic">🖥️</div>
@@ -905,7 +981,7 @@ function bestGrid(n: number, W: number, H: number, gap: number) {
   return best;
 }
 
-function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate, onStopShare }: { participants: Participant[]; share?: TrackReference; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void; onStopShare?: () => void }) {
+function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate, onStopShare, onListen, listeningTo }: { participants: Participant[]; share?: TrackReference; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void; onStopShare?: () => void; onListen?: (p: Participant) => void; listeningTo?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 500 });
   const [page, setPage] = useState(0);
@@ -944,7 +1020,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate
         </div>
         <div className="filmstrip">
           {participants.map((p) => (
-            <Tile key={p.identity} p={p} w={220} h={124} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} />
+            <Tile key={p.identity} p={p} w={220} h={124} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} onListen={onListen} listeningTo={listeningTo} />
           ))}
         </div>
       </div>
@@ -956,7 +1032,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate
     <div className="stage" ref={ref}>
       <div className="grid" style={{ gridTemplateColumns: `repeat(${g.cols}, ${Math.floor(g.w)}px)`, gap }}>
         {visible.map((p) => (
-          <Tile key={p.identity} p={p} w={g.w} h={g.h} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} />
+          <Tile key={p.identity} p={p} w={g.w} h={g.h} floats={floats} now={now} isHost={isHost} onModerate={onModerate} onPrivate={onPrivate} onListen={onListen} listeningTo={listeningTo} />
         ))}
       </div>
       {participants.length === 1 && (
@@ -974,7 +1050,7 @@ function Stage({ participants, share, floats, now, isHost, onModerate, onPrivate
 }
 
 /* ---------------------------------- tile ---------------------------------- */
-function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate }: { p: Participant; w: number; h: number; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void }) {
+function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate, onListen, listeningTo }: { p: Participant; w: number; h: number; floats: Float[]; now: number; isHost: boolean; onModerate: (a: string, id?: string) => void; onPrivate?: (p: Participant) => void; onListen?: (p: Participant) => void; listeningTo?: string }) {
   const camPub = p.getTrackPublication(Track.Source.Camera);
   const camRef = { participant: p, publication: camPub, source: Track.Source.Camera } as TrackReference;
   const camMuted = useIsMuted(camRef);
@@ -1036,6 +1112,10 @@ function Tile({ p, w, h, floats, now, isHost, onModerate, onPrivate }: { p: Part
           <button onClick={() => onModerate('remove', p.identity)} title="Remove from session"><Icon name="remove" size={14} /></button>
         </div>
       )}
+      {onListen && !p.isLocal && listeningTo !== p.identity && (
+        <button className="listen-btn" onClick={() => onListen(p)} title={`Listen in on ${p.name}'s call`}>🎧 {small ? '' : 'Listen in'}</button>
+      )}
+      {listeningTo === p.identity && <span className="listen-chip">🎧 Listening</span>}
 
       {onPrivate && !p.isLocal && (
         <button className="pr-btn" onClick={() => onPrivate(p)} title={`Private room with ${p.name}`}>
